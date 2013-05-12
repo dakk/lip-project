@@ -1,0 +1,22 @@
+IMP = impi.cmo
+ASM = asmi.cmo
+
+.PHONY : clean run test
+.SILENT: clean run test
+
+$(IMP): impi.ml imp-syntax.ml imp-prettyp.ml imp-env.ml imp-store.ml imp-parser.ml imp-interpreter.ml
+	ocamlc -c -I +camlp4 -pp camlp4of.opt impi.ml
+
+$(ASM): asmi.ml asm-syntax.ml asm-prettyp.ml asm-parser.ml set.ml
+	ocamlc -c -I +camlp4 -pp camlp4of.opt asmi.ml
+
+fact: $(IMP) $(ASM)
+	camlp4 impi.cmo < fact.imp
+	camlp4 asmi.cmo < fact.asm
+
+fib: $(IMP) $(ASM)
+	camlp4 impi.cmo < fib.imp
+	camlp4 asmi.cmo < fib.asm
+
+clean:
+	'rm' *.cmo *.cmi

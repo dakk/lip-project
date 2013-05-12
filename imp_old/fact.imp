@@ -1,0 +1,12 @@
+program 
+const n = 10; array a[10]; var i; var f
+begin
+	i:=0;
+	f:=1;
+	while i<n do
+	begin
+		a[i] := f;
+		i := i+1;
+		f := f*(i+1)
+	end
+end

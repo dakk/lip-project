@@ -1,0 +1,8 @@
+imp-compiler_int.ml
+  Compilatore funzionante che gestisce gli interi nella maniera classica 
+	(limitata alla dimensione del registro). 
+  
+imp-compiler.ml
+  Compilatore funzionante che gestisce i bigint.
+  I bigint vengono rappresentati come una lista linkata.
+  

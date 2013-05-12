@@ -1,0 +1,395 @@
+(* label index *)
+let currentlabel = ref 0;;
+
+(* !currentlabel : valore 
+    currentlabel := valore  *)
+
+let int_of_bool b = if b then 1 else 0;;
+
+(* data types *)
+type bigint = int;;
+type mval = Bool of bool | Integer of bigint | Nil;;
+type lval = LBool of int | LInteger of int | LNil;;
+(************************************************************)
+(*                           ENVIRONMENT                    *)
+(************************************************************)
+
+(* env: function from identifiers (ide) to dval *)
+
+type ide = string;;
+type loc = int;;
+
+(* dval: semantic domain of environments *)
+
+type dval =
+  Unbound
+| DConst of mval
+| DVar of lval
+;;
+
+type env = Env of (ide -> dval);;
+
+exception UnboundIde of ide;;
+
+(* interface with the environment *)
+
+let emptyenv = fun () -> Env (fun x -> Unbound);;
+
+let bind (Env rho) x d = Env (fun y -> if y=x then d else rho y);;
+
+let applyenv (Env rho) x = match rho x with
+  Unbound -> raise (UnboundIde x)
+| _ as d -> d
+;;
+
+(************************************************************)
+(*                           EXPRESSIONS                    *)
+(************************************************************)
+
+
+(* exp: IMP expressions *)
+
+type exp =
+  True
+| False
+| Not of exp
+| And of exp * exp
+| Or of exp * exp
+| Int of bigint
+| Add of exp * exp
+| Eq of exp * exp
+| Lt of exp * exp
+| Val of ide
+;;
+
+
+(************************************************************)
+(*                           TYPE CHECKING                  *)
+(************************************************************)
+
+type t = TInt | TBool | TErr;;
+
+let rec typecheck rho = function
+    Int i -> TInt
+  | Add (e1,e2) -> 
+    (match (typecheck rho e1,typecheck rho e2) with
+      (TInt,TInt) -> TInt
+      | _ -> TErr)
+  | True -> TBool
+  | False -> TBool
+  | Not e -> 
+      (match (typecheck rho e) with
+        TBool -> TBool
+      | _ -> TErr)
+  | And (e1,e2) -> 
+    (match (typecheck rho e1,typecheck rho e2) with
+      (TBool,TBool) -> TBool
+      | _ -> TErr)
+  | Or (e1,e2) -> 
+    (match (typecheck rho e1,typecheck rho e2) with
+      (TBool,TBool) -> TBool
+      | _ -> TErr)
+  | Eq (i1,i2) -> 
+    (match (typecheck rho i1,typecheck rho i2) with
+      (TInt,TInt) -> TBool
+      | _ -> TErr)
+  | Lt (i1,i2) -> 
+    (match (typecheck rho i1,typecheck rho i2) with
+      (TInt,TInt) -> TBool
+      | _ -> TErr)
+  | Val x -> 
+    (match applyenv rho x with
+        DConst x' -> (match x' with
+                          Bool b -> TBool
+                        | Integer i -> TInt
+                        | Nil -> TErr )
+      | DVar x' -> (match x' with
+                          LBool b -> TBool
+                        | LInteger i -> TInt
+                        | LNil -> TErr )
+      | Unbound -> TErr);;
+
+let emptyreg () =
+  let rec emptyreg' i = match i with
+      64 -> [] 
+    | _ -> (string_of_int i,false)::(emptyreg' (i+1))
+  in (emptyreg' 1)
+;;
+
+let firstemptyreg r = 
+  let rec firstemptyreg' r prev = match r with
+      (i,true)::r' -> firstemptyreg' r' (prev@[(i,true)])
+    | (i,false)::r' -> (i, (prev@[(i,true)]@r'))
+    | [] -> ("-1", prev)
+  in firstemptyreg' r []
+;;
+
+let rec unlockreg regs r  = match regs with
+    (i,b)::regs' -> if i = r then (i,false)::regs' else (i,b)::(unlockreg regs' r)
+  | [] -> []
+;;
+   
+
+(*
+    e: espressione
+    r: registro destinazione
+    rho: ambiente
+    F: registri
+    l: indice prossima etichetta libera 
+ *)
+let rec texp e r rho f = match e with
+    True -> ["addi $" ^ r ^ " 1 $0"]
+  | False -> ["addi $" ^ r ^ " 0 $0"]
+  | Not e' -> if typecheck rho e <> TBool then failwith "Type error Not" else
+      let (r',f') = (firstemptyreg f) in
+      let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+          (texp e' r' rho f') @ 
+          ["addi $"^r^" 1 $0";
+          "beq $"^r'^" $0 "^cont; 
+          "addi $"^r^" 0 $0"; 
+          cont^":"]
+  | And (e1,e2) -> if typecheck rho e <> TBool then failwith "Type error And" else
+      let (r1,f1) = (firstemptyreg f) in
+      let (r2,f2) = (firstemptyreg f1) in
+      let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+          (texp e1 r1 rho f2) @ 
+          (texp e2 r2 rho f2) @ 
+          ["addi $"^r^" 0 $0"; 
+          "beq $"^r1^" $0 "^cont; 
+          "beq $"^r2^" $0 "^cont; 
+          "addi $"^r^" 1 $0"; 
+          cont^":"]
+  | Or (e1,e2) -> if typecheck rho e <> TBool then failwith "Type error Or" else
+      let (r1,f1) = (firstemptyreg f) in
+      let (r2,f2) = (firstemptyreg f1) in
+      let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+          (texp e1 r1 rho f2) @ 
+          (texp e2 r2 rho f2) @ 
+          ["addi $"^r^" 1 $0"; 
+          "bne $"^r1^" $0 "^cont; 
+          "bne $"^r2^" $0 "^cont; 
+          "addi $"^r^" 0 $0"; 
+          cont^":"] 
+  | Int i -> ["addi $" ^ r ^ " "^(string_of_int i)^" $0"]
+  | Add (e1,e2) -> if typecheck rho e <> TInt then failwith "Type error Add" else
+      let (r1,f1) = (firstemptyreg f) in
+      let (r2,f2) = (firstemptyreg f1) in
+          (texp e1 r1 rho f2) @ 
+          (texp e2 r2 rho f2) @ 
+          ["add $"^r^" $"^r1^" $"^r2]
+  | Lt (e1,e2) -> if typecheck rho e <> TBool then failwith "Type error Lt" else
+      let (r1,f1) = (firstemptyreg f) in
+      let (r2,f2) = (firstemptyreg f1) in
+          (texp e1 r1 rho f2) @ 
+          (texp e2 r2 rho f2) @ 
+          ["slt $"^r^" $"^r1^" $"^r2] 
+  | Eq (e1,e2) -> if typecheck rho e <> TBool then failwith "Type error Eq" else
+      let (r1,f1) = (firstemptyreg f) in
+      let (r2,f2) = (firstemptyreg f1) in
+      let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+          (texp e1 r1 rho f2) @ 
+          (texp e2 r2 rho f2) @ 
+          ["addi $"^r^" 1 $0";
+          "beq $"^r1^" $"^r2^" "^cont; 
+          "addi $"^r^" 0 $0"; 
+          cont^":"]
+  | Val i ->
+    let l = applyenv rho i in
+    let (r',f') = (firstemptyreg f) in
+    (match l with
+        DConst l' -> (match l' with
+                          Bool b -> ["addi $"^r^" "^(string_of_int (int_of_bool b))^" $0"]
+                        | Integer i -> ["addi $"^r^" "^(string_of_int i)^" $0"]
+                        | Nil -> failwith "Exception" )
+      | DVar l' -> (match l' with
+                            LBool b -> ["addi $"^r'^" "^(string_of_int b)^" $0";
+                                        "load $"^r^" $"^r'^" $0"]
+                          | LInteger i -> ["addi $"^r'^" "^(string_of_int i)^" $0";
+                                        "load $"^r^" $"^r'^" $0"]
+                          | LNil -> failwith "Exception")
+      | Unbound -> failwith ("Unbound variable "^i))
+;;
+
+
+(************************************************************)
+(*                           DECLARATIONS                   *)
+(************************************************************)
+
+(* dec: IMP declarations *)
+
+type dec =
+    Empty
+  | Const of ide * mval
+  | VarInt of ide
+  | VarBool of ide
+  | Dseq of dec * dec
+;;
+
+let rec sem_dec d (r,l) = match d with
+  Empty -> (r,l)
+| Const(x,v) -> (bind r x (DConst v), l)
+| VarInt x -> (bind r x (DVar (LInteger l)), l+1)
+| VarBool x -> (bind r x (DVar (LBool l)), l+1)
+| Dseq(d1,d2) -> sem_dec d2 (sem_dec d1 (r,l))
+;;
+
+(************************************************************)
+(*                             COMMANDS                     *)
+(************************************************************)
+
+(* com: IMP commands *)
+
+type com =
+    Skip
+  | Break
+  | Assign of ide * exp
+  | Cseq of com * com
+  | If of exp * com * com
+  | Repeat of com
+;;
+
+
+let rec tcom c rho f loopend = match c with
+    Skip -> ["nop"]
+  | Break -> if loopend<>"" then ["jmp "^loopend] else ["nop"]
+  | Assign (i,e) -> 
+    let l = applyenv rho i in
+    let (r',f') = (firstemptyreg f) in
+    let (a,f'') = (firstemptyreg f') in
+    let loc = ( match l with 
+                    DConst i -> failwith "Error" 
+                  | Unbound -> failwith "Variable not exists"
+                  | DVar i -> (match i with
+                                  LBool b -> if typecheck rho e <> TBool then failwith "Type error loc bool" else string_of_int b
+                                | LInteger i -> if typecheck rho e <> TInt then failwith "Type error loc int" else string_of_int i
+                                | LNil -> failwith "Error") ) in    
+      (texp e r' rho f'') @
+      ["addi $"^a^" "^loc^" $0";
+       "store $"^a^" $0 $"^r']
+  | Cseq (c1,c2) -> (tcom c1 rho f loopend) @ (tcom c2 rho f loopend)
+  | If (e,c1,c2) -> if typecheck rho e <> TBool then failwith "Type error if" else
+    let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+    let ff = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+    let (r',f') = (firstemptyreg f) in
+      (texp e r' rho f') @
+      ["beq $"^r'^" $0 "^ff] @
+      tcom c1 rho f' loopend @
+      [ "jmp "^cont;
+        ff^":" ] @
+      tcom c2 rho f' loopend @
+      [ cont^":" ]
+  | Repeat c' -> 
+    let lloop = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+    let cont = "L"^(string_of_int (currentlabel:=!currentlabel+1; !currentlabel)) in
+      [lloop^":"] @
+      tcom c' rho f cont @
+      ["jmp "^lloop;
+      cont^":"]
+;;
+
+(************************************************************)
+(*                             PROGRAMS                     *)
+(************************************************************)
+
+type prog = Program of dec * com;;
+
+let tprog (Program (d,c)) =
+  let (rho,l) = sem_dec d (emptyenv(),0)
+  in (tcom c rho (emptyreg ()) "")@["halt"]
+;;
+
+let isalabel s = (String.get s ((String.length s)-1))=':';;
+
+let printlist ll = 
+  let rec printlist' l pl = match l with
+      [] -> ()
+    | s::l' -> if isalabel s then
+                  (if pl then 
+                          (Printf.printf "nop\n%s " s; printlist' l' true)
+                         else
+                          (Printf.printf "%s " s; printlist' l' true))
+               else
+                  (Printf.printf "%s\n" s; printlist' l' false)
+  in printlist' ll false
+;;
+
+
+let string_of_asm ll = 
+  let rec string_of_asm' l pl = match l with
+      [] -> ""
+    | s::l' -> if isalabel s then
+                  (if pl then 
+                          ("nop\n"^s^" "^(string_of_asm' l' true))
+                         else
+                          (s^" "^(string_of_asm' l' true)))
+               else
+                  (s^"\n"^(string_of_asm' l' false))
+  in string_of_asm' ll false
+;;
+
+let string_to_file f s =
+  let ch = open_out f in
+  output_string ch s;
+  close_out ch
+;;
+
+let compile f p = string_to_file f (string_of_asm (tprog p));;
+
+(*
+printlist (texp (And ((Not (Not True)),(Or (False,(Not True))))) "9" (emptyenv ()) (emptyreg ()));;
+*)
+
+
+
+(*compile "test1.asm" (Program(
+  Dseq(
+    Const("n1",Integer 1),
+    Dseq( Const("n2",Integer 10),
+    VarInt "v")
+  ),
+  Repeat(
+    If( Eq( Val "v", Int 7),
+      Break,
+      Assign("v", Add( Val "v", Int 1))
+    )
+  )
+));;*)
+
+(*compile "test1.asm" (Program(
+  Dseq(
+    Const("n1",Integer 1),
+    Dseq( Const("n2",Integer 10),
+    VarInt "v")
+  ),
+  Repeat(
+    If( Eq( Val "v", Int 7),
+      Break,
+      Assign("v", Add( Val "v", True))
+    )
+  )
+));;*)
+  
+(*  
+compile "../asm/test1.asm" (Program(
+    Dseq(Const("n1",Integer 1),
+    VarInt "v"),
+    Assign("v",Val "n1")));;
+*)
+
+
+(* 
+	Fibonacci program in Imp
+ *)
+compile "fib.asm" (Program(
+  Dseq( Const("n",Integer 12) , Dseq( VarInt "ris" , Dseq( VarInt "succ" , Dseq( VarInt "temp" , VarInt "i")))),
+  Cseq( Assign("ris",Int 0) , 
+  Cseq( Assign("succ",Int 1) , 
+  Cseq( Assign("i",Int 0) , 
+  Repeat( 
+    If( Eq( Val "i", Val "n") ,
+      Break ,
+      Cseq( Assign("temp", Val "succ") , 
+      Cseq( Assign("succ", Add( Val "ris", Val "succ" )) , 
+      Cseq( Assign("ris", Val "temp") , 
+      Assign("i", Add( Val "i", Int 1 )))))))))))
+);;

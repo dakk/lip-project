@@ -1,0 +1,30 @@
+#!/bin/bash
+ERROR=-1
+
+# numero minimo di argomenti
+MINARGS=1 
+
+# numero massimo di argomenti (input_file, output_file e opzione check-array-bounds)
+MAXARGS=1
+
+#numero di argomenti con cui e' stato chiamato lo script
+ARGC=$#
+
+if [ $ARGC -lt $MINARGS ]; then
+        echo "asmi: no input file"
+	exit $ERROR
+fi
+
+if [ $ARGC -gt $MAXARGS ]; then
+        echo "asmi: wrong number of arguments"
+	exit $ERROR
+fi
+
+if [ $ARGC -eq $MINARGS ] && [ -f $1 ]; then
+    camlp4 asmi.cmo < $1
+    exit 0
+else 
+    echo "asmi: file" $1 ": no such file"
+    exit $ERROR
+fi
+
